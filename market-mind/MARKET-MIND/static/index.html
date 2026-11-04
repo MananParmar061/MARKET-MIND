@@ -1,0 +1,143 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Market Mind</title>
+<style>
+  :root{--bg:#e8ecf1;--panel:#f6f7f9;--ink:#18202c;--muted:#5d6a7b;--line:#cfd6df;--accent:#33399b;--on-accent:#fff;--ok:#1d7a4d;--bad:#b3322f}
+  @media (prefers-color-scheme:dark){:root{--bg:#12161d;--panel:#1a2029;--ink:#e6eaf0;--muted:#97a3b3;--line:#2b3441;--accent:#8c92ff;--on-accent:#10131c;--ok:#5fcf97;--bad:#ff8a85}}
+  *{box-sizing:border-box}
+  html,body{height:100%;margin:0}
+  body{display:flex;background:var(--bg);color:var(--ink);font:15px/1.5 "Segoe UI",system-ui,sans-serif}
+  :focus-visible{outline:2px solid var(--accent);outline-offset:2px}
+  aside{width:270px;flex:none;background:var(--panel);border-right:1px solid var(--line);padding:22px 20px;display:flex;flex-direction:column;gap:14px;overflow:auto}
+  h1{margin:0;font:600 22px Georgia,serif}
+  .status{display:flex;gap:8px;align-items:flex-start;color:var(--muted);font-size:13px}
+  .dot{width:9px;height:9px;border-radius:50%;margin-top:5px;flex:none;background:var(--muted)}
+  .dot.ok{background:var(--ok)} .dot.bad{background:var(--bad)}
+  button{font:inherit;cursor:pointer;border-radius:8px;border:1px solid var(--line);background:transparent;color:var(--ink);padding:8px 12px}
+  button.primary{background:var(--accent);border-color:var(--accent);color:var(--on-accent);font-weight:600}
+  button:disabled{opacity:.5;cursor:default}
+  aside h2{margin:6px 0 0;font:600 14px "Segoe UI",sans-serif}
+  aside p{margin:0;color:var(--muted);font-size:13px}
+  ul{list-style:none;margin:0;padding:0;display:flex;flex-direction:column;gap:4px;font-size:14px;overflow-wrap:anywhere}
+  .spacer{flex:1}
+  main{flex:1;min-width:0;display:flex;flex-direction:column}
+  #log{flex:1;overflow-y:auto;padding:32px 24px}
+  .col{max-width:70ch;margin:0 auto}
+  .msg{white-space:pre-wrap;margin:0 0 22px;overflow-wrap:anywhere}
+  .user{width:fit-content;max-width:85%;margin-left:auto;background:var(--accent);color:var(--on-accent);padding:9px 14px;border-radius:14px}
+  .bot{font:17px/1.6 Georgia,serif}
+  .note{font:13.5px/1.55 "Cascadia Mono",Consolas,monospace;background:var(--panel);border-left:3px solid var(--accent);padding:10px 14px}
+  .empty{color:var(--muted);font:17px/1.6 Georgia,serif}
+  form{border-top:1px solid var(--line);background:var(--panel);padding:14px 24px}
+  form .col{display:flex;gap:10px;align-items:flex-end}
+  textarea{flex:1;resize:none;font:inherit;color:var(--ink);background:var(--bg);border:1px solid var(--line);border-radius:10px;padding:10px 12px;max-height:160px}
+  @media (max-width:760px){body{flex-direction:column}aside{width:100%;max-height:34vh;border-right:0;border-bottom:1px solid var(--line)}}
+</style>
+</head>
+<body>
+<aside>
+  <h1>Market Mind</h1>
+  <div class="status"><span class="dot" id="dot"></span><span id="statusText">Checking local model…</span></div>
+  <button class="primary" id="addBtn">Add a file</button>
+  <input type="file" id="file" accept=".pdf,.txt,.md,.csv" hidden>
+  <p>PDF, TXT, MD, or a price CSV with date, open, high, low, close, volume. Files stay on this PC.</p>
+  <h2>Indexed files</h2>
+  <ul id="docs"><li style="color:var(--muted)">None yet</li></ul>
+  <div class="spacer"></div>
+  <button id="clearBtn">Clear chat history</button>
+</aside>
+<main>
+  <div id="log"><div class="col" id="msgs">
+    <div class="empty" id="empty">Ask a question, or add a file first. A price CSV gets VWAP, volume-spike and net-delta statistics, computed on this PC before the model answers.</div>
+  </div></div>
+  <form id="form"><div class="col">
+    <textarea id="box" rows="1" placeholder="Ask about your files or a market concept (Enter to send, Shift+Enter for a new line)"></textarea>
+    <button class="primary" id="send" type="submit">Send</button>
+  </div></form>
+</main>
+<script>
+const $ = s => document.querySelector(s);
+const msgs = $('#msgs'), log = $('#log'), box = $('#box');
+let busy = false;
+
+function add(cls, text) {
+  const e = $('#empty'); if (e) e.remove();
+  const d = document.createElement('div');
+  d.className = 'msg ' + cls; d.textContent = text;
+  msgs.appendChild(d); log.scrollTop = log.scrollHeight;
+  return d;
+}
+
+async function send(text) {
+  busy = true; $('#send').disabled = true;
+  add('user', text);
+  const out = add('bot', 'Thinking…');
+  try {
+    const r = await fetch('/api/chat', {method: 'POST', headers: {'Content-Type': 'application/json'}, body: JSON.stringify({message: text})});
+    const reader = r.body.getReader(), dec = new TextDecoder();
+    let acc = '';
+    for (;;) {
+      const {done, value} = await reader.read();
+      if (done) break;
+      acc += dec.decode(value, {stream: true});
+      out.textContent = acc; log.scrollTop = log.scrollHeight;
+    }
+  } catch (err) {
+    out.textContent = 'Lost the connection to the app. Check that the start window is still open.';
+  }
+  busy = false; $('#send').disabled = false; box.focus();
+}
+
+$('#form').addEventListener('submit', e => {
+  e.preventDefault();
+  const t = box.value.trim();
+  if (!t || busy) return;
+  box.value = ''; box.style.height = 'auto'; send(t);
+});
+box.addEventListener('keydown', e => { if (e.key === 'Enter' && !e.shiftKey) { e.preventDefault(); $('#form').requestSubmit(); } });
+box.addEventListener('input', () => { box.style.height = 'auto'; box.style.height = box.scrollHeight + 'px'; });
+
+$('#addBtn').onclick = () => $('#file').click();
+$('#file').onchange = async e => {
+  const f = e.target.files[0]; if (!f) return;
+  const fd = new FormData(); fd.append('file', f);
+  const r = await fetch('/api/upload', {method: 'POST', body: fd});
+  const j = await r.json();
+  if (!r.ok) add('bot', 'Could not add ' + f.name + ': ' + (j.detail || 'unknown error'));
+  else { add('bot', 'Added ' + j.name + ' (' + j.chunks + ' sections indexed).'); if (j.summary) add('note', j.summary); loadDocs(); }
+  e.target.value = '';
+};
+
+$('#clearBtn').onclick = async () => {
+  if (!confirm('Delete the saved chat history? Indexed files are kept.')) return;
+  await fetch('/api/history', {method: 'DELETE'}); msgs.innerHTML = '';
+};
+
+async function loadDocs() {
+  const names = await (await fetch('/api/docs')).json();
+  $('#docs').innerHTML = '';
+  if (!names.length) { $('#docs').innerHTML = '<li style="color:var(--muted)">None yet</li>'; return; }
+  names.forEach(n => { const li = document.createElement('li'); li.textContent = n; $('#docs').appendChild(li); });
+}
+
+async function loadStatus() {
+  try {
+    const s = await (await fetch('/api/status')).json();
+    const dot = $('#dot'), t = $('#statusText');
+    if (!s.ollama) { dot.className = 'dot bad'; t.textContent = 'Ollama is not running. Start it from the Windows Start menu.'; }
+    else if (!s.ready) { dot.className = 'dot bad'; t.textContent = 'Model not downloaded. In PowerShell run: ollama pull ' + s.model; }
+    else { dot.className = 'dot ok'; t.textContent = 'Local model ready: ' + s.model; }
+  } catch (e) { $('#dot').className = 'dot bad'; $('#statusText').textContent = 'App server not responding.'; }
+}
+
+(async () => {
+  const h = await (await fetch('/api/history')).json();
+  h.forEach(m => add(m.role === 'user' ? 'user' : 'bot', m.content));
+  loadDocs(); loadStatus(); setInterval(loadStatus, 15000);
+})();
+</script>
+</body>
+</html>
